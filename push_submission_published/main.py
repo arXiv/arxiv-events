@@ -45,7 +45,7 @@ with engine.connect() as conn:
 
 # send events
 def _format_payload (row: Row) -> str: 
-    return json.dumps({k: v for k, v in row._mapping.items()}).encode('utf-8')
+    return json.dumps({k: row[k] for k in row._mapping.keys()}).encode('utf-8')
 
 for row in rows:
     future = publisher.publish(topic_path, _format_payload(row))
