@@ -20,6 +20,9 @@ parser = argparse.ArgumentParser(
 parser.add_argument('-n', '--dry-run', 
                     action='store_true',
                     help='Log sql output without actually sending it')
+parser.add_argument('-m', '--example-events',
+                    action='store_true',
+                    help='Publish hard coded example values for testing')
 args = parser.parse_args()
 
 # logging
@@ -37,21 +40,32 @@ publisher = PublisherClient()
 topic_path = publisher.topic_path(config['project_id'], config['topic_id'])
 
 # db connection
-try:
-    engine = create_engine(
-            f"mysql+pymysql://{config['db_username']}:{config['db_password']} \
-            @{config['db_host']}/{config['db_database_name']}")
-except OperationalError as e:
-    raise Exception(f"Failed to connect to db {config['db_host']}/{config['db_database_name']}") from e
+if not args.example_events:
+    try:
+        engine = create_engine(
+                f"mysql+pymysql://{config['db_username']}:{config['db_password']} \
+                @{config['db_host']}/{config['db_database_name']}")
+    except OperationalError as e:
+        raise Exception(f"Failed to connect to db {config['db_host']}/{config['db_database_name']}") from e
 
-# get rows
-query = 'select submission_id, document_id, paper_id, version, type \
-         from arXiv_next_mail \
-         where mail_id = (select max(mail_id) \
-                          from arXiv_next_mail)'
+    # get rows
+    query = 'select submission_id, document_id, paper_id, version, type \
+            from arXiv_next_mail \
+            where mail_id = (select max(mail_id) \
+                            from arXiv_next_mail)'
 
-with engine.connect() as conn:
-    rows = conn.execute(query).fetchall()
+    with engine.connect() as conn:
+        rows = conn.execute(query).fetchall()
+else:
+    rows = [
+        {
+            'submission_id': 3966840,
+            'document_id': 3249864,
+            'paper_id': 'test_paper1',
+            'version': 1,
+            'type': 'new'
+        }
+    ]
 
 # send events
 def _format_payload (row: Row) -> str: 
@@ -61,6 +75,11 @@ if args.dry_run:
     logger.info('***** DRY RUN OUTPUT *****')
     for row in rows:
         logger.info(_format_payload(row))
+elif args.example_events:
+    logger.info('***** PUBLISHING EXAMPLE EVENTS *****')
+    for row in rows:
+        future = publisher.publish(topic_path, json.dumps(row))
+        logger.info(future.result())
 else:
     for row in rows:
         future = publisher.publish(topic_path, _format_payload(row))
