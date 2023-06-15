@@ -8,6 +8,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.exc import OperationalError
 
 from google.cloud.pubsub_v1 import PublisherClient
+from google.oauth2 import service_account
 
 # config
 config = configparser.ConfigParser()
@@ -23,12 +24,13 @@ parser.add_argument('-n', '--dry-run',
 parser.add_argument('-m', '--example-events',
                     action='store_true',
                     help='Publish hard coded example values for testing')
+parser.add_argument('-c', '--credential-file')
 args = parser.parse_args()
 
 # logging
 logger = logging.getLogger("publish_submission_event")
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler(config["log_path"])
+fh = logging.FileHandler(config['DEFAULT']["log_path"])
 fh.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.ERROR)
@@ -36,17 +38,19 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 
 # event publisher
-publisher = PublisherClient()
-topic_path = publisher.topic_path(config['project_id'], config['topic_id'])
+if args.credential_file:
+    credentials = service_account.Credentials.from_service_account_file(args.credential_file)
+else:
+    credentials = None
+publisher = PublisherClient(credentials=credentials)
+topic_path = publisher.topic_path(config['DEFAULT']['project_id'], config['DEFAULT']['topic_id'])
 
 # db connection
 if not args.example_events:
     try:
-        engine = create_engine(
-                f"mysql+pymysql://{config['db_username']}:{config['db_password']} \
-                @{config['db_host']}/{config['db_database_name']}")
+        engine = create_engine(config['DEFAULT']['db_connection_string'])
     except OperationalError as e:
-        raise Exception(f"Failed to connect to db {config['db_host']}/{config['db_database_name']}") from e
+        raise Exception(f"Failed to connect to db") from e
 
     # get rows
     query = 'select submission_id, document_id, paper_id, version, type \
@@ -59,11 +63,11 @@ if not args.example_events:
 else:
     rows = [
         {
-            'submission_id': 3966840,
-            'document_id': 3249864,
-            'paper_id': 'test_paper1',
-            'version': 1,
-            'type': 'new'
+            "submission_id": 3966840,
+            "document_id": 3249864,
+            "paper_id": "test_paper1",
+            "version": 1,
+            "type": "new"
         }
     ]
 
@@ -72,13 +76,13 @@ def _format_payload (row: Row) -> str:
     return json.dumps({k: row[k] for k in row._mapping.keys()}).encode('utf-8')
 
 if args.dry_run:
-    logger.info('***** DRY RUN OUTPUT *****')
+    logger.info('***** PRINTING DRY RUN OUTPUT *****')
     for row in rows:
         logger.info(_format_payload(row))
 elif args.example_events:
     logger.info('***** PUBLISHING EXAMPLE EVENTS *****')
     for row in rows:
-        future = publisher.publish(topic_path, json.dumps(row))
+        future = publisher.publish(topic_path, json.dumps(row).encode('utf-8'))
         logger.info(future.result())
 else:
     for row in rows:
